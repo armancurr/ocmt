@@ -1,19 +1,11 @@
 {
   "commit": {
     "autoAccept": false,
-    "autoStageAll": false,
-    "model": {
-      "providerID": "github-copilot",
-      "modelID": "claude-haiku-4.5"
-    }
+    "autoStageAll": false
   },
   "changelog": {
     "autoSave": false,
-    "outputFile": "CHANGELOG.md",
-    "model": {
-      "providerID": "github-copilot",
-      "modelID": "claude-haiku-4.5"
-    }
+    "outputFile": "CHANGELOG.md"
   },
   "release": {
     "autoTag": false,

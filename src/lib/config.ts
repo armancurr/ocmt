@@ -321,9 +321,16 @@ async function cleanupLegacyModelFile(): Promise<void> {
 
 export async function getRepoConfig(): Promise<RepoConfig> {
   const configPath = await getConfigJsonPath();
-  const existing = existsSync(configPath)
-    ? normalizeConfig(JSON.parse(readFileSync(configPath, "utf-8")))
-    : DEFAULT_CONFIG;
+  let existing = DEFAULT_CONFIG;
+
+  if (existsSync(configPath)) {
+    try {
+      existing = normalizeConfig(JSON.parse(readFileSync(configPath, "utf-8")));
+    } catch {
+      existing = DEFAULT_CONFIG;
+    }
+  }
+
   const legacyModels = await readLegacyModelPreferences();
   const merged = mergeLegacyModels(existing, legacyModels);
 

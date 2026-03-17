@@ -7,8 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.1] - 2026-03-18
-
 ### Added
 - Repository-local model selection and configuration management (9844ac4)
 - Release command and changelog workflow (19aef51)
