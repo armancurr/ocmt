@@ -1,16 +1,76 @@
 /**
  * Configuration file management for oc
  *
- * Manages .oc/config.md and .oc/changelog.md in the repo root
+ * Manages .oc config files in the repo root
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
 import { join } from "path";
 import { git } from "../utils/git";
 
 const CONFIG_DIR = ".oc";
 const COMMIT_CONFIG_FILE = "config.md";
 const CHANGELOG_CONFIG_FILE = "changelog.md";
+const CONFIG_JSON_FILE = "config.json";
+const LEGACY_MODEL_CONFIG_FILE = "models.json";
+
+export interface ModelPreference {
+  providerID: string;
+  modelID: string;
+}
+
+export interface RepoConfig {
+  commit: {
+    autoAccept: boolean;
+    autoStageAll: boolean;
+    model?: ModelPreference;
+  };
+  changelog: {
+    autoSave: boolean;
+    outputFile: string;
+    model?: ModelPreference;
+  };
+  release: {
+    autoTag: boolean;
+    autoPush: boolean;
+    tagPrefix: string;
+  };
+  general: {
+    confirmPrompts: boolean;
+    verbose: boolean;
+  };
+}
+
+type LegacyModelPreferences = {
+  commitModel?: ModelPreference;
+  changelogModel?: ModelPreference;
+};
+
+const DEFAULT_CONFIG: RepoConfig = {
+  commit: {
+    autoAccept: false,
+    autoStageAll: false,
+  },
+  changelog: {
+    autoSave: false,
+    outputFile: "CHANGELOG.md",
+  },
+  release: {
+    autoTag: false,
+    autoPush: false,
+    tagPrefix: "v",
+  },
+  general: {
+    confirmPrompts: true,
+    verbose: false,
+  },
+};
 
 const DEFAULT_COMMIT_CONFIG = `# Commit Message Guidelines
 
@@ -88,17 +148,10 @@ Use the "Keep a Changelog" format (https://keepachangelog.com/).
 7. Only return the changelog content, no explanations
 `;
 
-/**
- * Get the git repository root directory
- */
 async function getRepoRoot(): Promise<string> {
-  const root = await git("rev-parse --show-toplevel");
-  return root;
+  return git("rev-parse --show-toplevel");
 }
 
-/**
- * Ensure the .oc config directory exists
- */
 async function ensureConfigDir(): Promise<string> {
   const repoRoot = await getRepoRoot();
   const configDir = join(repoRoot, CONFIG_DIR);
@@ -110,9 +163,232 @@ async function ensureConfigDir(): Promise<string> {
   return configDir;
 }
 
-/**
- * Get the commit config (creates default if doesn't exist)
- */
+async function getConfigJsonPath(): Promise<string> {
+  const configDir = await ensureConfigDir();
+  return join(configDir, CONFIG_JSON_FILE);
+}
+
+async function getLegacyModelConfigPath(): Promise<string> {
+  const configDir = await ensureConfigDir();
+  return join(configDir, LEGACY_MODEL_CONFIG_FILE);
+}
+
+function isModelPreference(value: unknown): value is ModelPreference {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.providerID === "string" &&
+    candidate.providerID.length > 0 &&
+    typeof candidate.modelID === "string" &&
+    candidate.modelID.length > 0
+  );
+}
+
+function normalizeLegacyModel(value: unknown): ModelPreference | undefined {
+  if (isModelPreference(value)) {
+    return value;
+  }
+
+  return undefined;
+}
+
+function normalizeConfig(value: unknown): RepoConfig {
+  const input = value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : {};
+
+  const commit =
+    input.commit && typeof input.commit === "object"
+      ? (input.commit as Record<string, unknown>)
+      : {};
+  const changelog =
+    input.changelog && typeof input.changelog === "object"
+      ? (input.changelog as Record<string, unknown>)
+      : {};
+  const release =
+    input.release && typeof input.release === "object"
+      ? (input.release as Record<string, unknown>)
+      : {};
+  const general =
+    input.general && typeof input.general === "object"
+      ? (input.general as Record<string, unknown>)
+      : {};
+
+  return {
+    commit: {
+      autoAccept:
+        typeof commit.autoAccept === "boolean"
+          ? commit.autoAccept
+          : DEFAULT_CONFIG.commit.autoAccept,
+      autoStageAll:
+        typeof commit.autoStageAll === "boolean"
+          ? commit.autoStageAll
+          : DEFAULT_CONFIG.commit.autoStageAll,
+      model: normalizeLegacyModel(commit.model),
+    },
+    changelog: {
+      autoSave:
+        typeof changelog.autoSave === "boolean"
+          ? changelog.autoSave
+          : DEFAULT_CONFIG.changelog.autoSave,
+      outputFile:
+        typeof changelog.outputFile === "string" && changelog.outputFile.length > 0
+          ? changelog.outputFile
+          : DEFAULT_CONFIG.changelog.outputFile,
+      model: normalizeLegacyModel(changelog.model),
+    },
+    release: {
+      autoTag:
+        typeof release.autoTag === "boolean"
+          ? release.autoTag
+          : DEFAULT_CONFIG.release.autoTag,
+      autoPush:
+        typeof release.autoPush === "boolean"
+          ? release.autoPush
+          : DEFAULT_CONFIG.release.autoPush,
+      tagPrefix:
+        typeof release.tagPrefix === "string" && release.tagPrefix.length > 0
+          ? release.tagPrefix
+          : DEFAULT_CONFIG.release.tagPrefix,
+    },
+    general: {
+      confirmPrompts:
+        typeof general.confirmPrompts === "boolean"
+          ? general.confirmPrompts
+          : DEFAULT_CONFIG.general.confirmPrompts,
+      verbose:
+        typeof general.verbose === "boolean"
+          ? general.verbose
+          : DEFAULT_CONFIG.general.verbose,
+    },
+  };
+}
+
+function mergeLegacyModels(
+  config: RepoConfig,
+  legacy: LegacyModelPreferences,
+): RepoConfig {
+  return {
+    ...config,
+    commit: {
+      ...config.commit,
+      model: legacy.commitModel ?? config.commit.model,
+    },
+    changelog: {
+      ...config.changelog,
+      model: legacy.changelogModel ?? config.changelog.model,
+    },
+  };
+}
+
+async function readLegacyModelPreferences(): Promise<LegacyModelPreferences> {
+  const legacyPath = await getLegacyModelConfigPath();
+
+  if (!existsSync(legacyPath)) {
+    return {};
+  }
+
+  try {
+    const raw = JSON.parse(readFileSync(legacyPath, "utf-8")) as Record<
+      string,
+      unknown
+    >;
+
+    return {
+      commitModel: normalizeLegacyModel(raw.commitModel),
+      changelogModel: normalizeLegacyModel(raw.changelogModel),
+    };
+  } catch {
+    return {};
+  }
+}
+
+async function writeRepoConfig(config: RepoConfig): Promise<void> {
+  const configPath = await getConfigJsonPath();
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
+}
+
+async function cleanupLegacyModelFile(): Promise<void> {
+  const legacyPath = await getLegacyModelConfigPath();
+
+  if (existsSync(legacyPath)) {
+    unlinkSync(legacyPath);
+  }
+}
+
+export async function getRepoConfig(): Promise<RepoConfig> {
+  const configPath = await getConfigJsonPath();
+  const existing = existsSync(configPath)
+    ? normalizeConfig(JSON.parse(readFileSync(configPath, "utf-8")))
+    : DEFAULT_CONFIG;
+  const legacyModels = await readLegacyModelPreferences();
+  const merged = mergeLegacyModels(existing, legacyModels);
+
+  if (
+    !existsSync(configPath) ||
+    legacyModels.commitModel ||
+    legacyModels.changelogModel
+  ) {
+    await writeRepoConfig(merged);
+    if (legacyModels.commitModel || legacyModels.changelogModel) {
+      await cleanupLegacyModelFile();
+    }
+  }
+
+  return merged;
+}
+
+export async function saveRepoConfig(config: RepoConfig): Promise<void> {
+  await ensureConfigDir();
+  await writeRepoConfig(config);
+}
+
+export async function updateRepoConfig(
+  updater: (config: RepoConfig) => RepoConfig,
+): Promise<RepoConfig> {
+  const current = await getRepoConfig();
+  const next = updater(current);
+  await saveRepoConfig(next);
+  return next;
+}
+
+export async function getCommitModelPreference(): Promise<ModelPreference | undefined> {
+  const config = await getRepoConfig();
+  return config.commit.model;
+}
+
+export async function getChangelogModelPreference(): Promise<ModelPreference | undefined> {
+  const config = await getRepoConfig();
+  return config.changelog.model;
+}
+
+export async function setCommitModelPreference(
+  model: ModelPreference,
+): Promise<void> {
+  await updateRepoConfig((config) => ({
+    ...config,
+    commit: {
+      ...config.commit,
+      model,
+    },
+  }));
+}
+
+export async function setChangelogModelPreference(
+  model: ModelPreference,
+): Promise<void> {
+  await updateRepoConfig((config) => ({
+    ...config,
+    changelog: {
+      ...config.changelog,
+      model,
+    },
+  }));
+}
+
 export async function getCommitConfig(): Promise<string> {
   const configDir = await ensureConfigDir();
   const configPath = join(configDir, COMMIT_CONFIG_FILE);
@@ -124,9 +400,6 @@ export async function getCommitConfig(): Promise<string> {
   return readFileSync(configPath, "utf-8");
 }
 
-/**
- * Get the changelog config (creates default if doesn't exist)
- */
 export async function getChangelogConfig(): Promise<string> {
   const configDir = await ensureConfigDir();
   const configPath = join(configDir, CHANGELOG_CONFIG_FILE);
@@ -138,9 +411,6 @@ export async function getChangelogConfig(): Promise<string> {
   return readFileSync(configPath, "utf-8");
 }
 
-/**
- * Check if config files exist
- */
 export async function configExists(): Promise<boolean> {
   try {
     const repoRoot = await getRepoRoot();

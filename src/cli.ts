@@ -3,6 +3,8 @@
 import { Command } from "commander";
 import { commitCommand } from "./commands/commit";
 import { changelogCommand } from "./commands/changelog";
+import { changelogModelCommand } from "./commands/changelog-model";
+import { commitModelCommand } from "./commands/commit-model";
 import { releaseCommand } from "./commands/release";
 
 const program = new Command();
@@ -30,6 +32,20 @@ program
   .option("-t, --to <ref>", "Ending commit/tag reference", "HEAD")
   .action(async (options) => {
     await changelogCommand(options);
+  });
+
+program
+  .command("commit-model")
+  .description("Choose and save the default model for commit messages")
+  .action(async () => {
+    await commitModelCommand();
+  });
+
+program
+  .command("changelog-model")
+  .description("Choose and save the default model for changelog generation")
+  .action(async () => {
+    await changelogModelCommand();
   });
 
 // Release command - generate changelog and commit it

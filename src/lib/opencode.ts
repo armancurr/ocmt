@@ -9,24 +9,28 @@ import color from "picocolors";
 import {
   createOpencode,
   createOpencodeClient,
+  type Part,
   type OpencodeClient,
 } from "@opencode-ai/sdk";
 import { exec } from "child_process";
 import { promisify } from "util";
-import { getCommitConfig, getChangelogConfig } from "./config";
+import {
+  getChangelogConfig,
+  getChangelogModelPreference,
+  getCommitConfig,
+  getCommitModelPreference,
+  type ModelPreference,
+} from "./config";
 
 const execAsync = promisify(exec);
 
-// Models
-const COMMIT_MODEL = {
-  providerID: "opencode",
-  modelID: "gpt-5-nano",
-};
+export interface AvailableModel extends ModelPreference {
+  label: string;
+  name: string;
+  isProviderDefault: boolean;
+}
 
-const CHANGELOG_MODEL = {
-  providerID: "opencode",
-  modelID: "claude-sonnet-4-5",
-};
+type GenerationTarget = "commit" | "changelog";
 
 // Server state
 let clientInstance: OpencodeClient | null = null;
@@ -146,13 +150,129 @@ async function getClient(): Promise<OpencodeClient> {
 /**
  * Extract text content from AI response parts
  */
-function extractTextFromParts(parts: any[]): string {
+function extractTextFromParts(parts: Part[]): string {
   const textParts = parts
     .filter((part) => part.type === "text")
     .map((part) => part.text)
     .join("");
 
   return textParts.trim();
+}
+
+function getPromptErrorMessage(result: any): string | null {
+  if (result?.error?.data?.message) {
+    return result.error.data.message;
+  }
+
+  const responseError = result?.data?.info?.error;
+  if (!responseError) {
+    return null;
+  }
+
+  if (responseError.data?.message) {
+    return responseError.data.message;
+  }
+
+  if (typeof responseError.message === "string") {
+    return responseError.message;
+  }
+
+  if (typeof responseError.name === "string") {
+    return responseError.name;
+  }
+
+  return "OpenCode returned an empty response";
+}
+
+async function deleteSession(client: OpencodeClient, sessionId: string): Promise<void> {
+  try {
+    await client.session.delete({ path: { id: sessionId } });
+  } catch {
+    // Ignore cleanup failures.
+  }
+}
+
+function sortModels(models: AvailableModel[]): AvailableModel[] {
+  return [...models].sort((a, b) => {
+    if (a.isProviderDefault !== b.isProviderDefault) {
+      return a.isProviderDefault ? -1 : 1;
+    }
+
+    return a.label.localeCompare(b.label);
+  });
+}
+
+export async function listAvailableModels(): Promise<AvailableModel[]> {
+  const client = await getClient();
+  const providers = await client.config.providers();
+
+  if (!providers.data) {
+    throw new Error("Failed to load available models from OpenCode");
+  }
+
+  const defaults = providers.data.default || {};
+  const models: AvailableModel[] = [];
+
+  for (const provider of providers.data.providers || []) {
+    for (const model of Object.values(provider.models || {})) {
+      if (model.status !== "active") {
+        continue;
+      }
+
+      models.push({
+        providerID: provider.id,
+        modelID: model.id,
+        label: `${provider.id}/${model.id}`,
+        name: model.name || model.id,
+        isProviderDefault: defaults[provider.id] === model.id,
+      });
+    }
+  }
+
+  return sortModels(models);
+}
+
+export async function getConfiguredModel(
+  target: GenerationTarget,
+): Promise<ModelPreference | undefined> {
+  const savedModel =
+    target === "commit"
+      ? await getCommitModelPreference()
+      : await getChangelogModelPreference();
+
+  if (!savedModel) {
+    return undefined;
+  }
+
+  const availableModels = await listAvailableModels();
+  const exists = availableModels.some(
+    (model) =>
+      model.providerID === savedModel.providerID &&
+      model.modelID === savedModel.modelID,
+  );
+
+  if (!exists) {
+    throw new Error(
+      `Saved ${target} model ${savedModel.providerID}/${savedModel.modelID} is no longer available. Run ${target === "commit" ? "oc commit-model" : "oc changelog-model"} to choose a new one.`,
+    );
+  }
+
+  return savedModel;
+}
+
+async function promptSession(
+  client: OpencodeClient,
+  sessionId: string,
+  prompt: string,
+  model?: ModelPreference,
+): Promise<any> {
+  return client.session.prompt({
+    path: { id: sessionId },
+    body: {
+      ...(model ? { model } : {}),
+      parts: [{ type: "text", text: prompt }],
+    },
+  });
 }
 
 /**
@@ -165,6 +285,7 @@ export async function generateCommitMessage(
 
   const client = await getClient();
   const systemPrompt = await getCommitConfig();
+  const model = await getConfiguredModel("commit");
 
   // Create a session for this commit
   const session = await client.session.create({
@@ -175,41 +296,37 @@ export async function generateCommitMessage(
     throw new Error("Failed to create session");
   }
 
-  // Build the prompt
-  let prompt = `${systemPrompt}\n\n---\n\nGenerate a commit message for the following diff:\n\n\`\`\`diff\n${diff}\n\`\`\``;
+  try {
+    let prompt = `${systemPrompt}\n\n---\n\nGenerate a commit message for the following diff:\n\n\`\`\`diff\n${diff}\n\`\`\``;
 
-  if (context) {
-    prompt += `\n\nAdditional context: ${context}`;
+    if (context) {
+      prompt += `\n\nAdditional context: ${context}`;
+    }
+
+    const result = await promptSession(client, session.data.id, prompt, model);
+
+    const errorMessage = getPromptErrorMessage(result);
+    if (errorMessage) {
+      throw new Error(`Failed to generate commit message: ${errorMessage}`);
+    }
+
+    if (!result.data) {
+      throw new Error("Failed to get AI response");
+    }
+
+    const message = extractTextFromParts(result.data.parts || []);
+
+    if (!message) {
+      throw new Error("OpenCode returned no text for the commit message");
+    }
+
+    return message
+      .replace(/^```[\s\S]*?\n/, "")
+      .replace(/\n```$/, "")
+      .trim();
+  } finally {
+    await deleteSession(client, session.data.id);
   }
-
-  // Send the prompt
-  const result = await client.session.prompt({
-    path: { id: session.data.id },
-    body: {
-      model: COMMIT_MODEL,
-      parts: [{ type: "text", text: prompt }],
-    },
-  });
-
-  if (!result.data) {
-    throw new Error("Failed to get AI response");
-  }
-
-  // Extract the commit message from the response
-  const message = extractTextFromParts(result.data.parts || []);
-
-  // Clean up session
-  await client.session.delete({ path: { id: session.data.id } });
-
-  if (!message) {
-    throw new Error("No commit message generated");
-  }
-
-  // Clean up the message (remove markdown code blocks if present)
-  return message
-    .replace(/^```[\s\S]*?\n/, "")
-    .replace(/\n```$/, "")
-    .trim();
 }
 
 /**
@@ -222,6 +339,7 @@ export async function generateChangelog(
 
   const client = await getClient();
   const systemPrompt = await getChangelogConfig();
+  const model = await getConfiguredModel("changelog");
 
   // Create a session for this changelog
   const session = await client.session.create({
@@ -248,30 +366,28 @@ export async function generateChangelog(
   // Build the prompt
   const prompt = `${systemPrompt}\n\n---\n\nGenerate a changelog for the following commits (from ${fromRef} to ${toRef}):${versionInstruction}\n\n${commitsList}`;
 
-  // Send the prompt
-  const result = await client.session.prompt({
-    path: { id: session.data.id },
-    body: {
-      model: CHANGELOG_MODEL,
-      parts: [{ type: "text", text: prompt }],
-    },
-  });
+  try {
+    const result = await promptSession(client, session.data.id, prompt, model);
 
-  if (!result.data) {
-    throw new Error("Failed to get AI response");
+    const errorMessage = getPromptErrorMessage(result);
+    if (errorMessage) {
+      throw new Error(`Failed to generate changelog: ${errorMessage}`);
+    }
+
+    if (!result.data) {
+      throw new Error("Failed to get AI response");
+    }
+
+    const changelog = extractTextFromParts(result.data.parts || []);
+
+    if (!changelog) {
+      throw new Error("OpenCode returned no text for the changelog");
+    }
+
+    return changelog.trim();
+  } finally {
+    await deleteSession(client, session.data.id);
   }
-
-  // Extract the changelog from the response
-  const changelog = extractTextFromParts(result.data.parts || []);
-
-  // Clean up session
-  await client.session.delete({ path: { id: session.data.id } });
-
-  if (!changelog) {
-    throw new Error("No changelog generated");
-  }
-
-  return changelog.trim();
 }
 
 /**
@@ -284,6 +400,7 @@ export async function updateChangelogFile(
   const { newChangelog, existingChangelog, changelogPath } = options;
 
   const client = await getClient();
+  const model = await getConfiguredModel("changelog");
 
   // Create a session for this update
   const session = await client.session.create({
@@ -317,37 +434,34 @@ ${newChangelog}
 
 Return the complete updated CHANGELOG.md content:`;
 
-  // Send the prompt
-  const result = await client.session.prompt({
-    path: { id: session.data.id },
-    body: {
-      model: CHANGELOG_MODEL,
-      parts: [{ type: "text", text: prompt }],
-    },
-  });
+  try {
+    const result = await promptSession(client, session.data.id, prompt, model);
 
-  if (!result.data) {
-    throw new Error("Failed to get AI response");
+    const errorMessage = getPromptErrorMessage(result);
+    if (errorMessage) {
+      throw new Error(`Failed to update changelog: ${errorMessage}`);
+    }
+
+    if (!result.data) {
+      throw new Error("Failed to get AI response");
+    }
+
+    let updatedChangelog = extractTextFromParts(result.data.parts || []);
+
+    if (!updatedChangelog) {
+      throw new Error("OpenCode returned no text for the changelog update");
+    }
+
+    updatedChangelog = updatedChangelog
+      .replace(/^```markdown\n?/i, "")
+      .replace(/^```\n?/, "")
+      .replace(/\n?```$/, "")
+      .trim();
+
+    return updatedChangelog;
+  } finally {
+    await deleteSession(client, session.data.id);
   }
-
-  // Extract the updated changelog
-  let updatedChangelog = extractTextFromParts(result.data.parts || []);
-
-  // Clean up session
-  await client.session.delete({ path: { id: session.data.id } });
-
-  if (!updatedChangelog) {
-    throw new Error("No updated changelog generated");
-  }
-
-  // Clean up markdown code blocks if present
-  updatedChangelog = updatedChangelog
-    .replace(/^```markdown\n?/i, "")
-    .replace(/^```\n?/, "")
-    .replace(/\n?```$/, "")
-    .trim();
-
-  return updatedChangelog;
 }
 
 /**

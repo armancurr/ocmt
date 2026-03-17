@@ -1,0 +1,27 @@
+{
+  "commit": {
+    "autoAccept": false,
+    "autoStageAll": false,
+    "model": {
+      "providerID": "github-copilot",
+      "modelID": "claude-haiku-4.5"
+    }
+  },
+  "changelog": {
+    "autoSave": false,
+    "outputFile": "CHANGELOG.md",
+    "model": {
+      "providerID": "github-copilot",
+      "modelID": "claude-haiku-4.5"
+    }
+  },
+  "release": {
+    "autoTag": false,
+    "autoPush": false,
+    "tagPrefix": "v"
+  },
+  "general": {
+    "confirmPrompts": true,
+    "verbose": false
+  }
+}
