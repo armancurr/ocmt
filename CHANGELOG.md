@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-03-18
+
+### Added
+- Repository-local model selection and configuration management (9844ac4)
+- Release command and changelog workflow (19aef51)
+
+### Fixed
+- Call cleanup and process.exit on all exit blocks (99bbbf6)
+- One more cleanup() via Vercel review (d7c3d40)
+- Missing cleanups in commit.ts (7f0fbbb)
+- Cleanup() before process.exit in commits and changelog (4ce530c)
+- Another cleanup() in changelog (06c4b90)
+
 ## [1.0.2] - 2025-12-15
 
 ### Added
