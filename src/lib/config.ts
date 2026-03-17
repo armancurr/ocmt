@@ -275,11 +275,11 @@ function mergeLegacyModels(
     ...config,
     commit: {
       ...config.commit,
-      model: legacy.commitModel ?? config.commit.model,
+      model: config.commit.model ?? legacy.commitModel,
     },
     changelog: {
       ...config.changelog,
-      model: legacy.changelogModel ?? config.changelog.model,
+      model: config.changelog.model ?? legacy.changelogModel,
     },
   };
 }
@@ -297,11 +297,30 @@ async function readLegacyModelPreferences(): Promise<LegacyModelPreferences> {
       unknown
     >;
 
+    const commitModel = normalizeLegacyModel(raw.commitModel);
+    const changelogModel = normalizeLegacyModel(raw.changelogModel);
+
+    if (!commitModel && !changelogModel) {
+      try {
+        unlinkSync(legacyPath);
+      } catch {
+        // Ignore cleanup failures for malformed legacy config.
+      }
+
+      return {};
+    }
+
     return {
-      commitModel: normalizeLegacyModel(raw.commitModel),
-      changelogModel: normalizeLegacyModel(raw.changelogModel),
+      commitModel,
+      changelogModel,
     };
   } catch {
+    try {
+      unlinkSync(legacyPath);
+    } catch {
+      // Ignore cleanup failures for malformed legacy config.
+    }
+
     return {};
   }
 }
