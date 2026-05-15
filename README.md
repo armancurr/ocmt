@@ -108,6 +108,16 @@ oc changelog --from v1.0.0 --to HEAD
 oc changelog -f v1.0.0 -t v2.0.0
 ```
 
+### Choose Repo-Local Models
+
+```bash
+# Pick the default model for commit messages
+oc commit-model
+
+# Pick the default model for changelog generation
+oc changelog-model
+```
+
 ## Configuration
 
 On first run, ocmt creates a `.oc/` directory in your repository root with configuration files:
@@ -137,6 +147,12 @@ Controls how AI generates commit messages. Default uses [Conventional Commits](h
 
 Controls changelog generation format. Default uses [Keep a Changelog](https://keepachangelog.com/) format.
 
+### `.oc/config.json` - Repo Settings and Model Selection
+
+Stores repo-local settings, including the saved OpenCode model for commit and changelog generation.
+
+Use `oc commit-model` and `oc changelog-model` to update `commit.model` and `changelog.model`.
+
 Edit these files to customize AI behavior for your project.
 
 ## Commands
@@ -145,6 +161,8 @@ Edit these files to customize AI behavior for your project.
 |---------|---------|-------------|
 | `oc` | `ocmt`, `opencommit` | Generate commit message from staged changes |
 | `oc changelog` | `oc cl` | Generate changelog from commits |
+| `oc commit-model` |  | Choose the default commit model for this repo |
+| `oc changelog-model` |  | Choose the default changelog model for this repo |
 
 ## Options
 
@@ -174,10 +192,14 @@ Edit these files to customize AI behavior for your project.
 
 ### Models Used
 
-| Feature | Provider | Model |
-|---------|----------|-------|
-| Commit messages | opencode | gpt-5-nano |
-| Changelogs | opencode | claude-sonnet-4-5 |
+| Feature | Model selection |
+|---------|-----------------|
+| Commit messages | Uses `.oc/config.json` `commit.model` if set, otherwise OpenCode default |
+| Changelogs | Uses `.oc/config.json` `changelog.model` if set, otherwise OpenCode default |
+
+When you run `oc commit-model` or `oc changelog-model`, oc fetches the active models exposed by your current OpenCode account and lets you save one for that repository.
+
+If a saved model is no longer available, oc stops with a clear error and asks you to reselect a model.
 
 ## Examples
 
