@@ -1,11 +1,19 @@
 {
   "commit": {
     "autoAccept": false,
-    "autoStageAll": false
+    "autoStageAll": false,
+    "model": {
+      "providerID": "openai",
+      "modelID": "gpt-5.4-mini"
+    }
   },
   "changelog": {
     "autoSave": false,
-    "outputFile": "CHANGELOG.md"
+    "outputFile": "CHANGELOG.md",
+    "model": {
+      "providerID": "openai",
+      "modelID": "gpt-5.4-mini"
+    }
   },
   "release": {
     "autoTag": false,
