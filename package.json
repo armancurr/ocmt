@@ -13,6 +13,7 @@
     "start": "node dist/cli.js",
     "dev": "bun --watch src/cli.ts",
     "build": "bun build src/cli.ts --outdir=dist --target=node --format=esm && bun build src/index.ts --outdir=dist --target=node --format=esm",
+    "rebuild": "bun pm cache rm && rm -rf dist node_modules && bun install && bun run build && chmod +x dist/cli.js dist/index.js && bun link",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "bun run build"
   },
@@ -45,12 +46,12 @@
   ],
   "dependencies": {
     "@clack/prompts": "^0.11.0",
-    "@opencode-ai/sdk": "^1.2.27",
+    "@opencode-ai/sdk": "^1.17.7",
     "commander": "^12.1.0",
     "picocolors": "^1.1.1"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "typescript": "^5.7.2"
+    "typescript": "^5.9.3"
   }
 }
