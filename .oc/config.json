@@ -3,8 +3,8 @@
     "autoAccept": false,
     "autoStageAll": false,
     "model": {
-      "providerID": "openai",
-      "modelID": "gpt-5.4-mini"
+      "providerID": "github-copilot",
+      "modelID": "gpt-5.6-luna"
     }
   },
   "changelog": {
